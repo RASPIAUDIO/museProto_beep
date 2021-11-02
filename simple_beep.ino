@@ -16,50 +16,33 @@
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
    CONDITIONS OF ANY KIND, either express or implied.
 */
-//////////////////////////////////////////////////////////////////////////
-//
-// BEEP
-//
-//////////////////////////////////////////////////////////////////////////
-#include "Audio.h"
+
 #include "Arduino.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
-//#include <sys/socket.h>
-//#include <dirent.h>
 #include <driver/i2s.h>
-#include <NeoPixelBus.h>
 #include "SPIFFS.h"
 
 #define I2SR (i2s_port_t)0
-#define VM GPIO_NUM_0        // button
+#define VM GPIO_NUM_0       // button
 #define ONled 0
 #define PW GPIO_NUM_21        // Amp power ON
+#define GAIN GPIO_NUM_23      //
 #define BLOCK_SIZE 128
 
-
-RgbColor REDL(64, 0, 0);
-RgbColor GREENL(0, 64, 0);
-RgbColor BLUEL(0, 0, 64);
-RgbColor WHITEL(64, 64, 64);
-RgbColor BLACKL(0, 0, 0);
 
 
 bool testOK;
 static bool mp3ON;
-const uint16_t PixelCount = 1;
-const uint8_t PixelPin = 22;
 
-// three element pixels, in different order and speeds
-NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(PixelCount, PixelPin);
 
 
 
 const i2s_config_t i2s_configR = {
   .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_TX ), // Receive, transfer
-  .sample_rate = 44100,                         // 16KHz
+  .sample_rate = 44100,                         //
   .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT, //
   .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT, // although the SEL config should be left, it seems to transmit on right
   .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
@@ -80,14 +63,6 @@ i2s_pin_config_t pin_configR =
 
 
 
-//////////////////////////////////////////////////////////////////////////
-//led refresh for Muse PROTO (1 leds ws2812)
-/////////////////////////////////////////////////////////////////////////
-void ledRefresh(int n, uint32_t v, int s)
-{
-  strip.SetPixelColor(n, v & s);
-  strip.Show();
-}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -97,25 +72,27 @@ void ledRefresh(int n, uint32_t v, int s)
 ////////////////////////////////////////////////////////////////////////////////////////
 
 
-static void playAudio(void* data)
+static void playAudio(void)
 {
   int16_t s0, s1;
-  int8_t c[16000];
+  static int8_t c[44100];
   int l;
   size_t t;
   uint16_t s16[64];
-
   int a = 0;
+
   i2s_set_clk(I2SR, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
 
   File f = SPIFFS.open("/beep.wav", FILE_READ);
   if (f == NULL) printf("err opening file\n");
   // header read
   f.read((uint8_t*)c, 44);
-  // data read
-  l = (int)f.read((uint8_t*)c, 16000);
-  if (l < 0) printf("Erreur SD\n");
 
+  do
+  {
+  // data read
+  l = (int)f.read((uint8_t*)c, 44100);
+  if (l < 0) printf("Erreur \n");
   //  i2s_zero_dma_buffer(I2SR);
   for (int i = 0; i < l; i++)
   {
@@ -132,6 +109,7 @@ static void playAudio(void* data)
       while (n == 0) n = i2s_write_bytes(I2SR, (const char*)s16, 128, portMAX_DELAY);
     }
   }
+  }while(l > 0);
   // muting after playing
   for (int i = 0; i < 64; i++)s16[i] = 0;
   int n = 0;
@@ -140,7 +118,6 @@ static void playAudio(void* data)
 
   f.close();
   printf ("Play End\n");
-  vTaskDelete(NULL);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -153,53 +130,46 @@ void setup()
   esp_err_t err;
 
   if (!SPIFFS.begin(true))Serial.println("Erreur SPIFFS");
-
-
-  //Init button
+  //Init buton
   gpio_reset_pin(VM);
   gpio_set_direction(VM, GPIO_MODE_INPUT);
-  gpio_set_pull_mode(VM, GPIO_PULLUP_ONLY);
+  gpio_set_pull_mode(VM, GPIO_PULLDOWN_ONLY);
 
   // Amp power enable
   gpio_reset_pin(PW);
   gpio_set_direction(PW, GPIO_MODE_OUTPUT);
   gpio_set_level(PW, 1);
 
+       
+  gpio_reset_pin(GAIN);
+  gpio_set_direction(GAIN, GPIO_MODE_OUTPUT);  
+  gpio_set_pull_mode(GAIN, GPIO_PULLDOWN_ONLY);   // 15dB
+
+// or
+//          gpio_set_level(GAIN, 0);      // 12dB
+// or wired solution
+//          gpio23 (GAIN) ==> GND         // 12dB  
+  
+
   //I2S port0 init:   TX, RX, mono , 16bits, 44100hz
   i2s_driver_install(I2SR, &i2s_configR, 0, NULL);
   i2s_set_pin(I2SR, &pin_configR);
   i2s_stop(I2SR);
-
-  //turn RGB led to white
-  strip.Begin();
-  strip.SetPixelColor(ONled, WHITEL);
-  strip.Show();
-
 }
 
 
 
 void loop() {
-
+ 
   if (gpio_get_level(VM) == 0)
   {
-
-    //turn RGB led to blue
-    strip.SetPixelColor(ONled, BLUEL);
-    strip.Show();
-
-    //play beep
+    //playing 
+    printf("Playing\n");
     i2s_start(I2SR);
-    xTaskCreatePinnedToCore(playAudio, "playAudio", 20000, NULL, 10, NULL, 1);
-    delay(2000);
+    playAudio();
+    delay(100);
     i2s_stop(I2SR);
-
-    //turn RGB led to red
-    strip.SetPixelColor(ONled, REDL);
-    strip.Show();
-
   }
 
-  delay(100);
 
 }
