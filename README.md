@@ -7,5 +7,7 @@ MUSE beep
  *  
     the beep.wav file needs to be uploaded to SPIFFS the file is locataed in the /data directory of this squetch
     then use the arduino ESP32 squetch data uplaad section
+    
+    The wave file must be encoded on 8 bits
 
     tfor the tutorial https://forum.raspiaudio.com/t/muse-proto-board/231
